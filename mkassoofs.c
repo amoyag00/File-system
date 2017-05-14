@@ -10,26 +10,7 @@
 
 #define WELCOMEFILE_DATABLOCK_NUMBER (ASSOOFS_LAST_RESERVED_BLOCK + 1)
 #define WELCOMEFILE_INODE_NUMBER (ASSOOFS_LAST_RESERVED_INODE + 1)
-////////////////////////
-static  struct  file_system_type  assoofs_type = {
-    .owner    = THIS_MODULE ,
-    .name     = "assoofs",
-    .mount    = assoofs_mount ,
-    .kill_sb  = kill_litter_super ,
-};
 
-
-static  int  __init  init_hello(void)
-{
-    register_filesystem();
-    return  0;
-}
-
-static  void  __exit  cleanup_hello(void)
-{
-    unregister_filesystem();
-}
-///////////////////////////7
 static int write_superblock(int fd) {
     struct assoofs_super_block_info sb = {
         .version = 1,
@@ -177,11 +158,3 @@ int main(int argc, char *argv[])
     close(fd);
     return ret;
 }
-
-
-
-
-
-
-module_init(init_hello);
-module_exit(cleanup_hello);
