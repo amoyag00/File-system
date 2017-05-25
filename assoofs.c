@@ -212,12 +212,32 @@ static int assoofs_mkdir(struct inode *dir , struct dentry *dentry , umode_t mod
 }
 
 ssize_t  assoofs_read(struct  file *filp , char  __user *buf , size_t len , loff_t *ppos){
+	struct inode *inode; 
+	struct super_block *sb;
+	struct assoofs_inode_info *ino_info;
+	struct buffer_head *buffer;
+	char *buff_char;
+	int n_bytes;
+	inode = filp->f_path.dentry->d_inode;
+
+	sb=inode->i_sb;
+	ino_info=inode->i_private;
+	if(*ppos>=ino_info->file_size){
+		return 0;
+	}
+	buffer=sb_bread(sb,ino_info->data_block_number);
+	buff_char=(char *)buffer->b_data;
+	n_bytes=min(len, (size_t)ino_info->file_size);
+	copy_to_user(buf,buff_char,n_bytes);
+	*ppos+=n_bytes;
+	printk("Se han leído %d bytes\n",n_bytes);
+	brelse(buffer);
+	return n_bytes;
+
 	//Leer el bloque
 	//DE filp se saca el numero de inodo
 	//guardar lo leido (buffer_head) en buf
 	//usar copy_to_user
-	printk("Se han leído %lu bytes\n",len);
-	return 0;
 }
 
 ssize_t  assoofs_write(struct  file *filp , const  char  __user *buf , size_t len , loff_t *ppos){
