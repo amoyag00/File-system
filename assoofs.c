@@ -21,6 +21,7 @@ ssize_t  assoofs_write(struct  file *filp , const  char  __user *buf , size_t le
 static  int  assoofs_iterate(struct  file *filp , struct  dir_context *ctx);
 struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64_t ino);
 struct inode *assoofs_get_inode(struct super_block *sb, uint64_t ino);
+static int create_aux(struct inode *inode, struct dentry *dentry, mode_t mode);
 
 
 static  struct  file_system_type  assoofs_type = {
@@ -202,14 +203,119 @@ struct dentry *assoofs_lookup(struct inode *parent_inode , struct dentry *child_
 }
 
 static int assoofs_create(struct inode *dir , struct dentry *dentry , umode_t mode , bool excl){
-	printk("inodo creado\n");
-	return 0;
+	printk("Creando inodo\n");
+	return create_aux(dir, dentry,mode);
 }
 
 static int assoofs_mkdir(struct inode *dir , struct dentry *dentry , umode_t mode){
-	printk("Directorio creado\n");
+	printk("Creando directorio\n");
+	return create_aux(dir, dentry, S_IFDIR | mode);
+	
+	
+}
+
+static int create_aux(struct inode *dir, struct dentry *dentry, mode_t mode){
+	struct inode *inode;
+	struct assoofs_inode_info *ino_info, *iterator;
+	struct super_block *sb;
+	struct assoofs_inode_info *parent_dir_info;
+	struct buffer_head *buffer_head;
+	struct assoofs_super_block_info *sb_info;
+	struct assoofs_dir_record_entry *inode_contents_datablock;
+	uint64_t count;
+	int i;
+	//Se crea un inodo para el nuevo directorio/archivo
+	sb = dir->i_sb;
+	sb_info=sb->s_fs_info;
+	count=sb_info->inodes_count;
+	if(count==ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
+		printk("No se pueden crear más files\n");
+		return 0;
+	}
+	inode = new_inode(sb);
+	inode->i_sb=sb;
+	inode->i_op=&assoofs_inode_ops;
+	inode->i_atime=CURRENT_TIME;
+	inode->i_ctime=CURRENT_TIME;
+	inode->i_mtime=CURRENT_TIME;
+	inode->i_ino=(count+ ASSOOFS_START_INO - ASSOOFS_RESERVED_INODES+1);
+	ino_info= assoofs_get_inode_info(sb,inode->i_ino);
+	inode->i_private=ino_info;
+	ino_info->mode=mode;
+	if(S_ISDIR(mode)){
+		ino_info->dir_children_count=0;//Al crear un directorio no tendrá hijos
+		inode->i_fop=&assoofs_dir_operations;
+	}else if(S_ISREG(mode)){
+		ino_info->file_size=0;//Al crear un fichero su tamaño inicial será 0.
+		inode->i_fop=&assoofs_file_operations;
+	}
+
+	//Hay que encontrar un bloque vacío
+	/* 1.- Suponer un mapa de bits tal que 100011001010
+	*  2.- Crear una máscara de bits tal que 1+i0's; con i=5 sería 100000
+	*  3.- Hacer un and lógico del mapa y la máscara: 100011001010 & [000000]100000 ; 
+	*  4.- Si el bloque en la posición i estaba libre (era un 1), al hacer el and lógico eso nos dará un 1.
+	*  5.- Se sale del bucle. Nos encontramos con que el primer bloque libre está en la posición i;
+	*/
+	for (i = ASSOOFS_RESERVED_INODES; i <ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED; i++) {
+		if (sb_info->free_blocks & (1 << i)) {
+			break;
+		}
+	}
+
+	if( i == ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
+		printk("No quedan huecos libres\n");
+		return 0;
+	}
+
+
+	/* Hay que decir al mapa de bits que el bloque que estaba libre ya no lo está
+	* 1.- Usamos la máscara de bits de la última iteración y la negamos . Ej: 1000->0111
+	* 2.- Al hacer un and lógico del mapa y esta máscara negada, la posición en la que había un 1 ahora
+	* tendrá un 0 y el resto quedará tal y como estaba ya que 1 & X= X;  0 & X = 0.
+	*/
+	sb_info->free_blocks &= ~(1 << i);
+    //Se guardan estos cambios en el superbloque
+	buffer_head = sb_bread(sb, ASSOOFS_SUPERBLOCK_BLOCK_NUMBER);
+	buffer_head->b_data = (char *)sb_info;
+	mark_buffer_dirty(buffer_head);
+	sync_dirty_buffer(buffer_head);
+	brelse(buffer_head);
+
+	//Se guardan los cambios en al alamcen de inodos
+	buffer_head = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
+	iterator=(struct assoofs_inode_info *)buffer_head->b_data;
+	iterator+=sb_info->inodes_count;
+	memcpy(iterator, ino_info, sizeof(struct assoofs_inode_info));
+	sb_info->inodes_count++;
+
+	mark_buffer_dirty(buffer_head);
+	sync_dirty_buffer(buffer_head);
+	brelse(buffer_head);
+
+	parent_dir_info=assoofs_get_inode_info(sb,dir->i_ino);
+	buffer_head = sb_bread(sb, parent_dir_info->data_block_number);
+	inode_contents_datablock=(struct assoofs_dir_record_entry *)buffer_head->b_data;
+	inode_contents_datablock += parent_dir_info->dir_children_count;
+	inode_contents_datablock->inode_no = ino_info->inode_no;
+	strcpy(inode_contents_datablock->filename, dentry->d_name.name);
+
+	mark_buffer_dirty(buffer_head);
+	sync_dirty_buffer(buffer_head);
+	brelse(buffer_head);
+	parent_dir_info->dir_children_count++;
+
+	buffer_head = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
+	iterator= assoofs_get_inode_info(sb,parent_dir_info->inode_no);
+	memcpy(iterator, parent_dir_info, sizeof(*iterator));
+	mark_buffer_dirty(buffer_head);
+	sync_dirty_buffer(buffer_head);
+	
+	inode_init_owner(inode, dir, mode);
+	d_add(dentry, inode);
 	return 0;
 }
+
 
 ssize_t  assoofs_read(struct  file *filp , char  __user *buf , size_t len , loff_t *ppos){
 	struct inode *inode; 
@@ -252,15 +358,12 @@ ssize_t  assoofs_write(struct  file *filp , const  char  __user *buf , size_t le
 	}*/
 	buff_char=(char *)buffer->b_data;
 	buff_char+=*ppos;
-	printk("log1\n");
 	copy_from_user(buff_char,buf,len);
-	printk("copy from user\n");
 	*ppos+=len;
-	printk("pos\n");
 	mark_buffer_dirty(buffer);
-	printk("marked\n");
+	printk("Marked as dirty\n");
 	sync_dirty_buffer(buffer);
-	printk("marked and synced\n");
+	printk("Synchronized\n");
 	ino_info->file_size=*ppos;
 	printk("Se han escrito %lu bytes\n",len);
 	brelse(buffer);
