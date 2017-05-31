@@ -234,15 +234,37 @@ ssize_t  assoofs_read(struct  file *filp , char  __user *buf , size_t len , loff
 	brelse(buffer);
 	return n_bytes;
 
-	//Leer el bloque
-	//DE filp se saca el numero de inodo
-	//guardar lo leido (buffer_head) en buf
-	//usar copy_to_user
 }
 
 ssize_t  assoofs_write(struct  file *filp , const  char  __user *buf , size_t len , loff_t *ppos){
+	struct inode *inode; 
+	struct super_block *sb;
+	struct assoofs_inode_info *ino_info;
+	struct buffer_head *buffer;
+	char * buff_char;
+	
+	inode = filp->f_path.dentry->d_inode;
+	sb=inode->i_sb;
+	ino_info=inode->i_private;
+	buffer=sb_bread(sb,ino_info->data_block_number);
+	/*if (!bh) {
+		return 0;
+	}*/
+	buff_char=(char *)buffer->b_data;
+	buff_char+=*ppos;
+	printk("log1\n");
+	copy_from_user(buff_char,buf,len);
+	printk("copy from user\n");
+	*ppos+=len;
+	printk("pos\n");
+	mark_buffer_dirty(buffer);
+	printk("marked\n");
+	sync_dirty_buffer(buffer);
+	printk("marked and synced\n");
+	ino_info->file_size=*ppos;
 	printk("Se han escrito %lu bytes\n",len);
-	return 0;
+	brelse(buffer);
+	return len;
 }
 
 static  int  assoofs_iterate(struct  file *filp , struct  dir_context *ctx){
