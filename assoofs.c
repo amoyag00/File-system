@@ -29,6 +29,9 @@ int assoofs_inode_save(struct super_block *sb, struct assoofs_inode_info *ino_in
 struct assoofs_inode_info *assoofs_inode_search(struct super_block *sb,struct assoofs_inode_info *start,
 	struct assoofs_inode_info *target);
 
+static DEFINE_MUTEX(assoofs_mutex);
+static DEFINE_MUTEX(mutex_write);
+
 
 
 static  struct  file_system_type  assoofs_type = {
@@ -234,7 +237,9 @@ static int create_aux(struct inode *dir, struct dentry *dentry, umode_t mode){
 	//Se crea un inodo para el nuevo directorio/archivo
 	sb = dir->i_sb;
 	sb_info=sb->s_fs_info;
+	mutex_lock_interruptible(&mutex_write);
 	count=sb_info->inodes_count;
+	mutex_unlock(&mutex_write);
 	if(count==ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
 		printk("No se pueden crear más files\n");
 		return 0;
@@ -280,10 +285,12 @@ static int create_aux(struct inode *dir, struct dentry *dentry, umode_t mode){
 	mark_buffer_dirty(buffer_head);
 	sync_dirty_buffer(buffer_head);
 	brelse(buffer_head);
+	mutex_lock_interruptible(&mutex_write);
 	parent_dir_info->dir_children_count++;
 	
 
 	assoofs_inode_save(sb,parent_dir_info);
+	mutex_unlock(&mutex_write);
 	inode_init_owner(inode, dir, mode);
 	d_add(dentry, inode);
 	return 0;
@@ -299,6 +306,7 @@ int assoofs_get_freeblock(struct super_block *sb, uint64_t * free_block_number){
 	struct assoofs_super_block_info *sb_info;
 	int i;
 	sb_info=sb->s_fs_info;
+	mutex_lock_interruptible(&assoofs_mutex);
 	for (i = ASSOOFS_RESERVED_INODES; i <ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED; i++) {
 		if (sb_info->free_blocks & (1 << i)) {
 			break;
@@ -319,6 +327,7 @@ int assoofs_get_freeblock(struct super_block *sb, uint64_t * free_block_number){
 	*/
 	sb_info->free_blocks &= ~(1 << i);
 	assoofs_sb_sync(sb);
+	mutex_unlock(&assoofs_mutex);
 	return 0;
 }
 
@@ -329,8 +338,10 @@ void assoofs_inode_add(struct super_block *sb, struct assoofs_inode_info *ino_in
 	sb_info=sb->s_fs_info;
 
 	//Se guardan los cambios en al almacen de inodos
+	mutex_lock_interruptible(&mutex_write);
 	buffer_head = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
 	iterator=(struct assoofs_inode_info *)buffer_head->b_data;
+	mutex_lock_interruptible(&assoofs_mutex);
 	iterator+=sb_info->inodes_count;
 	memcpy(iterator, ino_info, sizeof(struct assoofs_inode_info));
 	sb_info->inodes_count++;
@@ -338,6 +349,8 @@ void assoofs_inode_add(struct super_block *sb, struct assoofs_inode_info *ino_in
 	mark_buffer_dirty(buffer_head);
 	assoofs_sb_sync(sb);
 	brelse(buffer_head);
+	mutex_unlock(&assoofs_mutex);
+	mutex_unlock(&mutex_write);
 }
 
 void assoofs_sb_sync(struct super_block *sb){
@@ -360,12 +373,13 @@ int assoofs_inode_save(struct super_block *sb, struct assoofs_inode_info *parent
 	struct buffer_head *buffer_head;
 	printk("Guardando los datos del inodo modificado\n");
 	buffer_head = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
-	/*iterator= assoofs_inode_search(sb,(struct assoofs_inode_info *)buffer_head->b_data, parent_dir_info);//iterator= parent_dir_info;
-	memcpy(iterator, parent_dir_info, sizeof(*iterator));*/
+	mutex_lock_interruptible(&assoofs_mutex);
+	iterator= assoofs_inode_search(sb,(struct assoofs_inode_info *)buffer_head->b_data, parent_dir_info);//iterator= parent_dir_info;
+	memcpy(iterator, parent_dir_info, sizeof(*iterator));
 	mark_buffer_dirty(buffer_head);
 	sync_dirty_buffer(buffer_head);
 	brelse(buffer_head);
-
+	mutex_unlock(&assoofs_mutex);
 	return 0;
 }
 
@@ -438,9 +452,10 @@ ssize_t  assoofs_write(struct  file *filp , const  char  __user *buf , size_t le
 	sync_dirty_buffer(buffer);
 	printk("Synchronized\n");
 	brelse(buffer);
+	mutex_lock_interruptible(&mutex_write);
 	ino_info->file_size=*ppos;
 	assoofs_inode_save(sb, ino_info);
-	
+	mutex_unlock(&mutex_write);
 	printk("Se han escrito %lu bytes\n",len);
 	
 	return len;
