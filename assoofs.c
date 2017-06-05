@@ -233,6 +233,7 @@ static int create_aux(struct inode *dir, struct dentry *dentry, umode_t mode){
 	struct assoofs_super_block_info *sb_info;	
 	struct assoofs_dir_record_entry *dir_contents_datablock;
 	uint64_t count;
+	
 
 	//Se crea un inodo para el nuevo directorio/archivo
 	sb = dir->i_sb;
@@ -251,7 +252,7 @@ static int create_aux(struct inode *dir, struct dentry *dentry, umode_t mode){
 	inode->i_atime=CURRENT_TIME;
 	inode->i_ctime=CURRENT_TIME;
 	inode->i_mtime=CURRENT_TIME;
-	inode->i_ino=(count+ ASSOOFS_START_INO - ASSOOFS_RESERVED_INODES+1);
+	inode->i_ino=(count + ASSOOFS_START_INO - ASSOOFS_RESERVED_INODES + 1);
 	ino_info=kmalloc(sizeof(struct assoofs_inode_info),GFP_KERNEL);
 	ino_info->inode_no = inode->i_ino;
 	inode->i_private=ino_info;
@@ -275,7 +276,7 @@ static int create_aux(struct inode *dir, struct dentry *dentry, umode_t mode){
 	assoofs_inode_add(sb,ino_info);
 
 	parent_dir_info=dir->i_private;
-
+	
 	buffer_head = sb_bread(sb, parent_dir_info->data_block_number);
 	dir_contents_datablock=(struct assoofs_dir_record_entry *)buffer_head->b_data;
 	dir_contents_datablock += parent_dir_info->dir_children_count;
@@ -307,7 +308,7 @@ int assoofs_get_freeblock(struct super_block *sb, uint64_t * free_block_number){
 	int i;
 	sb_info=sb->s_fs_info;
 	mutex_lock_interruptible(&assoofs_mutex);
-	for (i = ASSOOFS_RESERVED_INODES; i <ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED; i++) {
+	for (i = ASSOOFS_RESERVED_INODES +1; i <ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED; i++) {
 		if (sb_info->free_blocks & (1 << i)) {
 			break;
 		}
@@ -369,20 +370,21 @@ void assoofs_sb_sync(struct super_block *sb){
 	
 }
 int assoofs_inode_save(struct super_block *sb, struct assoofs_inode_info *parent_dir_info){
-	struct assoofs_inode_info *iterator;
+	//struct assoofs_inode_info *iterator;
 	struct buffer_head *buffer_head;
 	printk("Guardando los datos del inodo modificado\n");
 	buffer_head = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
 	mutex_lock_interruptible(&assoofs_mutex);
-	iterator= assoofs_inode_search(sb,(struct assoofs_inode_info *)buffer_head->b_data, parent_dir_info);//iterator= parent_dir_info;
-	memcpy(iterator, parent_dir_info, sizeof(*iterator));
+	/*iterator= assoofs_inode_search(sb,(struct assoofs_inode_info *)buffer_head->b_data, parent_dir_info);
+	memcpy(iterator, parent_dir_info, sizeof(*iterator));*/
 	mark_buffer_dirty(buffer_head);
 	sync_dirty_buffer(buffer_head);
 	brelse(buffer_head);
 	mutex_unlock(&assoofs_mutex);
 	return 0;
 }
-
+/*Esta función que estaba implementada en la referencia, el simplfs, la he implementado por si llegase a necesitarla en 
+algún punto, pero no le veo utilidad y de momento no la he usado*/
 struct assoofs_inode_info *assoofs_inode_search(struct super_block *sb,struct assoofs_inode_info *start,
 	struct assoofs_inode_info *target){
 	struct assoofs_super_block_info *sb_info;
@@ -478,11 +480,12 @@ static  int  assoofs_iterate(struct  file *filp , struct  dir_context *ctx){
 	record=(struct assoofs_dir_record_entry*)buffer->b_data;
 	printk("Dir children count %llu \n ",ino_info->dir_children_count);
 	for (i=0;i<ino_info->dir_children_count;i++){
-		printk("Iteración: %d",i);
+		printk("Iteración: %d\n",i);
 		dir_emit(ctx,record->filename,ASSOOFS_FILENAME_MAXLEN,record->inode_no,DT_UNKNOWN);//Actualiza el contexto
 		ctx->pos+=sizeof(struct assoofs_dir_record_entry);
 		record++;
 	}
+	ctx->pos+=sizeof(struct assoofs_dir_record_entry);
 	brelse(buffer);
 	printk("Iterated\n");
 	return 0;
