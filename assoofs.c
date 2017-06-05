@@ -10,7 +10,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alejandro Moya García");
 
-//Comentario para probar forks
+
 int assoofs_fill_super(struct super_block *sb, void *data , int silent);
 static  struct  dentry *assoofs_mount(struct  file_system_type *fs_type ,int flags , const  char *dev_name , void *data);
 struct dentry *assoofs_lookup(struct inode *parent_inode , struct dentry *child_dentry , unsigned int flags);
@@ -28,7 +28,10 @@ void assoofs_sb_sync(struct super_block *sb);
 int assoofs_inode_save(struct super_block *sb, struct assoofs_inode_info *ino_info);
 struct assoofs_inode_info *assoofs_inode_search(struct super_block *sb,struct assoofs_inode_info *start,
 	struct assoofs_inode_info *target);
+void assoofs_destory_inode(struct inode *inode);
 
+
+static struct kmem_cache *assoofs_inode_cachep;
 static DEFINE_MUTEX(assoofs_mutex);
 static DEFINE_MUTEX(mutex_write);
 
@@ -64,6 +67,8 @@ static  const  struct  super_operations  assoofs_sops = {//Hay que añadir más 
 
 static  int  __init  assoofs_init(void)
 {
+	assoofs_inode_cachep = kmem_cache_create("assoofs_inode_cache",sizeof(struct assoofs_inode_info),
+	                                     0,(SLAB_RECLAIM_ACCOUNT| SLAB_MEM_SPREAD),NULL);
 	 if(register_filesystem(&assoofs_type)!=0){
 	 	printk("No se ha registrado correctamente\n");
 	 	return -1;
@@ -74,19 +79,27 @@ static  int  __init  assoofs_init(void)
 }
 
 
-static  void  __exit  assoofs_exit(void)
-{
+static  void  __exit  assoofs_exit(void){
 	 if(unregister_filesystem(&assoofs_type)!=0){
 	 	printk("No se ha unregistrado correctamente\n");
 	 	
 	 }else{
+	 	kmem_cache_destroy(assoofs_inode_cachep);
 	 	printk("Unregistrado correctamente\n");
 	 } 
+
+}
+
+void assoofs_destory_inode(struct inode *inode){
+	struct assoofs_inode_info *assoofs_inode = inode->i_private;
+
+	printk(KERN_INFO "Liberando datos del inodo %p (%lu)\n",
+	       assoofs_inode, inode->i_ino);
+	kmem_cache_free(assoofs_inode_cachep, assoofs_inode);
 }
 
 static  struct  dentry *assoofs_mount(struct  file_system_type *fs_type ,
-int flags , const  char *dev_name , void *data)
-{
+int flags , const  char *dev_name , void *data){
 	struct dentry *value=mount_bdev(fs_type ,flags ,dev_name ,data ,assoofs_fill_super);
 	printk("Montado correctamente\n");
 	return value;
@@ -145,11 +158,14 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb,uint64_
 	struct buffer_head *buffer;
 	struct assoofs_inode_info *ino_info;
 	struct assoofs_super_block_info *sb_info;
+	struct assoofs_inode_info *inode_buffer ;
 	buffer=sb_bread(sb,ASSOOFS_INODESTORE_BLOCK_NUMBER);
 	sb_info=sb->s_fs_info;
 	ino_info=(struct assoofs_inode_info *)buffer->b_data;
 	for (i=0;i<sb_info->inodes_count;i++){
 		if(ino==ino_info->inode_no){
+			inode_buffer=kmem_cache_alloc(assoofs_inode_cachep, GFP_KERNEL);
+			memcpy(inode_buffer, ino_info, sizeof(*inode_buffer));
 			brelse(buffer);
 			return ino_info;
 		}
@@ -253,7 +269,7 @@ static int create_aux(struct inode *dir, struct dentry *dentry, umode_t mode){
 	inode->i_ctime=CURRENT_TIME;
 	inode->i_mtime=CURRENT_TIME;
 	inode->i_ino=(count + ASSOOFS_START_INO - ASSOOFS_RESERVED_INODES + 1);
-	ino_info=kmalloc(sizeof(struct assoofs_inode_info),GFP_KERNEL);
+	ino_info=kmem_cache_alloc(assoofs_inode_cachep, GFP_KERNEL);
 	ino_info->inode_no = inode->i_ino;
 	inode->i_private=ino_info;
 	ino_info->mode=mode;
@@ -370,21 +386,20 @@ void assoofs_sb_sync(struct super_block *sb){
 	
 }
 int assoofs_inode_save(struct super_block *sb, struct assoofs_inode_info *parent_dir_info){
-	//struct assoofs_inode_info *iterator;
+	struct assoofs_inode_info *iterator;
 	struct buffer_head *buffer_head;
 	printk("Guardando los datos del inodo modificado\n");
 	buffer_head = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
 	mutex_lock_interruptible(&assoofs_mutex);
-	/*iterator= assoofs_inode_search(sb,(struct assoofs_inode_info *)buffer_head->b_data, parent_dir_info);
-	memcpy(iterator, parent_dir_info, sizeof(*iterator));*/
+	iterator= assoofs_inode_search(sb,(struct assoofs_inode_info *)buffer_head->b_data, parent_dir_info);
+	memcpy(iterator, parent_dir_info, sizeof(*iterator));
 	mark_buffer_dirty(buffer_head);
 	sync_dirty_buffer(buffer_head);
 	brelse(buffer_head);
 	mutex_unlock(&assoofs_mutex);
 	return 0;
 }
-/*Esta función que estaba implementada en la referencia, el simplfs, la he implementado por si llegase a necesitarla en 
-algún punto, pero no le veo utilidad y de momento no la he usado*/
+
 struct assoofs_inode_info *assoofs_inode_search(struct super_block *sb,struct assoofs_inode_info *start,
 	struct assoofs_inode_info *target){
 	struct assoofs_super_block_info *sb_info;
