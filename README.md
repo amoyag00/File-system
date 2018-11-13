@@ -1,9 +1,10 @@
-# practica-assoofs-amoyag00
-practica-assoofs-amoyag00 created by GitHub Classroom
+# File system
+Implementation of a file system based on the one made by psankar https://github.com/psankar/simplefs
 
-Nota para compilar: en mi caso al usar make la ruta que usaba uname "/lib/modules/4.4.0-72-generic" no contenia la carpeta build.
-En su lugar he usado la versión 4.4.0-71 poniendo su ruta directamente. Si no funciona tal y como est cambiar 
-"make -C /lib/modules/4.4.0-71-generic/build  M=$(PWD) modules" por
+Troubleshooting:
+About compiling: when using make, the route which used uname "/lib/modules/4.4.0-72-generic" didn't contain the build folder.
+Instead, I have used the version 4.4.0-71 writing its route directlty.If it does not work, change
+"make -C /lib/modules/4.4.0-71-generic/build  M=$(PWD) modules" for
  "make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules"
-y "make -C /lib/modules//lib/modules/4.4.0-71-generic/build M=$(PWD) clean" por
+and "make -C /lib/modules//lib/modules/4.4.0-71-generic/build M=$(PWD) clean" for
 "make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean"
